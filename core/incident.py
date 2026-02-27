@@ -1,10 +1,8 @@
-"""인시던트 분석 엔진 — 프로덕션 알림을 Claude Opus로 분석
+"""인시던트 분석 — ReactEngine + claude_escalate 기반
 
 AlertNow 등의 앱이 Slack에 보낸 인시던트 메시지를 감지하고,
-관련 서브프로젝트에서 Claude CLI(Opus deep think)를 실행하여
-근본 원인을 분석합니다.
-
-이 모듈은 ReactEngine을 거치지 않고, Claude CLI를 직접 호출합니다.
+ReactEngine이 트리아지한 뒤 코드 분석이 필요하면
+claude_escalate(deep_think=True)를 통해 Opus 모델로 분석합니다.
 """
 
 import logging
@@ -56,7 +54,7 @@ def resolve_project(incident_text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _git_pull(cwd: str) -> None:
+def git_pull(cwd: str) -> None:
     """프로젝트 디렉토리에서 git pull 실행하여 최신 소스 확보."""
     try:
         result = subprocess.run(
@@ -74,77 +72,29 @@ def _git_pull(cwd: str) -> None:
         logger.warning("git pull 오류: %s — %s", cwd, e)
 
 
-def analyze_incident(incident_text: str, project_path: str | None = None) -> str:
-    """Claude CLI(Opus deep think)로 인시던트를 분석.
+def build_incident_system_prompt(project_path: str | None = None) -> str:
+    """인시던트 분석용 ReactEngine 시스템 프롬프트를 생성.
 
     Args:
-        incident_text: 인시던트 메시지 전체 텍스트
-        project_path: Claude CLI의 cwd로 설정할 프로젝트 경로.
+        project_path: 식별된 프로젝트 디렉토리 경로.
                       None이면 워크스페이스 루트 사용.
-
-    Returns:
-        분석 결과 문자열
     """
     cwd = project_path or config.INCIDENT_WORKSPACE
+    prompt = config.INCIDENT_REACTENGINE_PROMPT
 
-    # 최신 소스 코드로 갱신
-    _git_pull(cwd)
+    if cwd:
+        prompt += (
+            f"\n## 프로젝트 정보\n"
+            f"- 코드베이스 경로: `{cwd}`\n"
+            f"- claude_escalate 호출 시 `cwd=\"{cwd}\"` 를 반드시 전달하세요.\n"
+            f"- `timeout={config.INCIDENT_CLAUDE_TIMEOUT}` 을 전달하세요 "
+            f"(코드 수정+PR 생성에 충분한 시간 확보).\n"
+        )
 
-    prompt = (
-        f"{config.INCIDENT_ANALYSIS_PROMPT}\n\n"
-        f"## Incident Alert\n"
-        f"```\n{incident_text}\n```"
+    prompt += (
+        "\n## 분석 프롬프트 템플릿\n"
+        "claude_escalate의 question에 아래 프롬프트를 포함하세요:\n\n"
+        f"```\n{config.INCIDENT_ANALYSIS_PROMPT}\n```\n"
     )
 
-    cmd = [
-        config.CLAUDE_CLI_PATH,
-        "-p", prompt,
-        "--dangerously-skip-permissions",
-        "--model", "opus",
-        "--effort", "high",
-    ]
-
-    timeout = config.INCIDENT_CLAUDE_TIMEOUT
-
-    logger.info(
-        "인시던트 분석 시작: cwd=%s, timeout=%ds",
-        cwd, timeout,
-    )
-
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd,
-        )
-    except FileNotFoundError:
-        return (
-            f"Claude CLI를 찾을 수 없습니다: {config.CLAUDE_CLI_PATH}\n"
-            "claude code가 설치되어 있는지 확인하세요."
-        )
-    except subprocess.TimeoutExpired:
-        return (
-            f"인시던트 분석 타임아웃 ({timeout}초 초과)\n"
-            "인시던트가 너무 복잡하거나 코드베이스가 매우 큰 경우 발생할 수 있습니다.\n"
-            "수동 분석을 권장합니다."
-        )
-
-    output = result.stdout
-    if result.stderr:
-        stderr_lines = [
-            line for line in result.stderr.strip().splitlines()
-            if not line.startswith(("\r", "╭", "│", "╰", "⠋", "⠙", "⠹"))
-        ]
-        if stderr_lines:
-            output += f"\n[참고] {chr(10).join(stderr_lines[:5])}"
-
-    max_output = config.INCIDENT_CLAUDE_MAX_OUTPUT
-    if len(output) > max_output:
-        output = output[:max_output] + "\n... (분석 출력이 너무 길어 잘렸습니다)"
-
-    if not output.strip():
-        return "(Claude로부터 분석 결과를 받지 못했습니다)"
-
-    return output
+    return prompt

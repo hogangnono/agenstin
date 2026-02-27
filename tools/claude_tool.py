@@ -40,6 +40,22 @@ class ClaudeEscalateTool(Tool):
                         "일반 질문은 false (기본값)"
                     ),
                 },
+                "cwd": {
+                    "type": "string",
+                    "description": (
+                        "Claude CLI 실행 디렉토리. "
+                        "코드베이스 분석 시 프로젝트 경로를 지정하면 "
+                        "해당 디렉토리의 코드를 분석합니다."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "타임아웃(초). 코드 수정+PR 생성 등 "
+                        "오래 걸리는 작업 시 늘려주세요. "
+                        "미지정 시 기본값 사용 (일반 120초, deep_think 300초)"
+                    ),
+                },
             },
             "required": ["question"],
         }
@@ -50,12 +66,17 @@ class ClaudeEscalateTool(Tool):
             return "question이 필요합니다."
 
         deep_think = kwargs.get("deep_think", False)
+        cwd = kwargs.get("cwd") or None
+        custom_timeout = kwargs.get("timeout")
 
         cmd = [config.CLAUDE_CLI_PATH, "-p", question, "--dangerously-skip-permissions"]
         if deep_think:
             cmd.extend(["--model", "opus", "--effort", "high"])
 
-        timeout = config.CLAUDE_THINK_TIMEOUT if deep_think else config.CLAUDE_TIMEOUT
+        if custom_timeout:
+            timeout = int(custom_timeout)
+        else:
+            timeout = config.CLAUDE_THINK_TIMEOUT if deep_think else config.CLAUDE_TIMEOUT
 
         try:
             result = subprocess.run(
@@ -63,6 +84,7 @@ class ClaudeEscalateTool(Tool):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                cwd=cwd,
             )
         except FileNotFoundError:
             return (

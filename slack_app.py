@@ -30,7 +30,12 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 import config
 from core import llm
-from core.incident import analyze_incident, is_incident_channel, resolve_project
+from core.incident import (
+    build_incident_system_prompt,
+    git_pull,
+    is_incident_channel,
+    resolve_project,
+)
 from core.mcp_client import McpManager
 from core.react import ReactEngine
 from memory.manager import MemoryManager
@@ -566,10 +571,12 @@ def _handle_incident_message(
     body: dict,
     say,
     slack_client,
+    engine: ReactEngine,
 ):
-    """인시던트 채널의 봇 메시지 분석 — Claude Opus deep think 직접 호출.
+    """인시던트 채널의 봇 메시지 분석 — ReactEngine + claude_escalate 기반.
 
-    ReactEngine을 거치지 않고 Claude CLI를 직접 실행합니다.
+    ReactEngine이 인시던트를 트리아지하고, 코드 분석이 필요하면
+    claude_escalate(deep_think=True)를 통해 Opus 모델로 분석합니다.
     별도 스레드에서 실행되므로 Slack 이벤트 루프를 블로킹하지 않습니다.
     """
     event = body.get("event", {})
@@ -594,22 +601,26 @@ def _handle_incident_message(
     else:
         logger.info("인시던트 관련 프로젝트를 특정하지 못함, 워크스페이스 루트 사용")
 
-    # 2단계: 분석 시작 알림 (스레드에 메시지)
+    # 2단계: 최신 소스 코드 확보
+    cwd = project_path or config.INCIDENT_WORKSPACE
+    if cwd:
+        git_pull(cwd)
+
+    # 3단계: 분석 시작 알림 (스레드에 메시지)
     project_info = f"`{project_name}`" if project_name else "전체 워크스페이스"
     try:
         say(
             text=(
                 f":mag: *인시던트 분석 시작*\n"
                 f"대상 프로젝트: {project_info}\n"
-                f"Claude Opus (deep think) 분석 중... "
-                f"최대 {config.INCIDENT_CLAUDE_TIMEOUT // 60}분 소요될 수 있습니다."
+                f"분석 중... (코드 분석이 필요하면 Claude Opus가 투입됩니다)"
             ),
             thread_ts=msg_ts,
         )
     except Exception as e:
         logger.warning("분석 시작 알림 전송 실패: %s", e)
 
-    # 3단계: 리액션 추가
+    # 4단계: 리액션 추가
     try:
         slack_client.reactions_add(
             channel=channel_id,
@@ -619,14 +630,20 @@ def _handle_incident_message(
     except Exception:
         pass
 
-    # 4단계: Claude Opus로 분석 실행
+    # 5단계: ReactEngine으로 인시던트 분석
+    system_prompt = build_incident_system_prompt(project_path)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"아래 인시던트 알림을 분석하세요:\n\n```\n{incident_text}\n```"},
+    ]
+
     try:
-        analysis = analyze_incident(incident_text, project_path)
+        analysis = engine.run(messages)
     except Exception as e:
         logger.error("인시던트 분석 오류: %s", e, exc_info=True)
         analysis = f"인시던트 분석 중 오류가 발생했습니다: {e}"
 
-    # 5단계: 분석 완료 리액션
+    # 6단계: 분석 완료 리액션
     try:
         slack_client.reactions_add(
             channel=channel_id,
@@ -636,7 +653,7 @@ def _handle_incident_message(
     except Exception:
         pass
 
-    # 6단계: 분석 결과를 스레드에 전송
+    # 7단계: 분석 결과를 스레드에 전송
     header = ":rotating_light: *인시던트 분석 결과*"
     if project_name:
         header += f" ({project_name})"
@@ -766,7 +783,7 @@ def main():
                 return
             threading.Thread(
                 target=_handle_incident_message,
-                args=(body, say, client),
+                args=(body, say, client, engine),
                 daemon=True,
             ).start()
             return
