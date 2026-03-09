@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables (민감정보)
+.env
+
+# Runtime data (메모리, 대화이력)
+data/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code local settings
+settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
