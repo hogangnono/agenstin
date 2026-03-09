@@ -13,16 +13,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ──────────────────────────────────────────────
-# Anthropic API (Sonnet 라우터용)
+# Sonnet 라우터 설정 (Claude CLI 사용)
 # ──────────────────────────────────────────────
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-
 # 라우터 모델 — 스크리닝, 라우팅, 간단한 응답에 사용
-ROUTER_MODEL = "claude-sonnet-4-6"
+ROUTER_MODEL = "sonnet"
 
-# 라우터 최대 응답 토큰
-ROUTER_MAX_TOKENS = 4096
+# 라우터 호출 타임아웃 (초)
+ROUTER_TIMEOUT = 60
 
 # ──────────────────────────────────────────────
 # Claude Code CLI 설정

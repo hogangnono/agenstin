@@ -584,10 +584,6 @@ def main():
         )
         sys.exit(1)
 
-    if not config.ANTHROPIC_API_KEY:
-        print("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-        sys.exit(1)
-
     # 라우터 초기화
     router = Router()
     logger.info("Sonnet 라우터 초기화: %s", config.ROUTER_MODEL)

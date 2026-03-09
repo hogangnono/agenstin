@@ -37,10 +37,6 @@ def _build_system_prompt(memory_manager: MemoryManager) -> str:
 def main():
     console.print("[bold cyan]Agenstin[/] — AI 비서 (Ctrl+C로 종료)\n")
 
-    if not config.ANTHROPIC_API_KEY:
-        console.print("[red]ANTHROPIC_API_KEY가 설정되지 않았습니다.[/]")
-        sys.exit(1)
-
     # 초기화
     router = Router()
     memory_manager = MemoryManager()

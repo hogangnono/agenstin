@@ -1,21 +1,21 @@
-"""Sonnet 라우터 — 스크리닝, 라우팅, 간단한 응답 처리
+"""Sonnet 라우터 — Claude CLI를 통한 스크리닝, 라우팅, 응답
 
 채널 메시지 스크리닝과 DM/멘션 응답을 담당합니다.
+Anthropic API 대신 Claude Code CLI (--model sonnet)를 사용합니다.
 - 간단한 질문 → Sonnet이 직접 답변
 - 복잡한 작업 (코드 분석, 파일 탐색 등) → Claude Code CLI에 위임
 """
 
 import logging
 
-import anthropic
-
+from core import claude_cli
 import config
 
 logger = logging.getLogger("agenstin.router")
 
 
 class Router:
-    """Sonnet 기반 메시지 라우터.
+    """Sonnet 기반 메시지 라우터 (Claude CLI 사용).
 
     1. screen()  — 채널 메시지가 봇 응답에 적합한지 판별 + 이모지 선택
     2. respond() — 메시지에 응답 (간단하면 직접, 복잡하면 [DELEGATE] 반환)
@@ -27,24 +27,22 @@ class Router:
         "star", "fire", "raised_hands", "memo", "white_check_mark",
     })
 
-    def __init__(self):
-        self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
     def screen(self, text: str) -> str | None:
         """채널 메시지 스크리닝.
 
         Returns:
             응답할 가치가 있으면 emoji 이름, 아니면 None.
         """
+        prompt = f"{config.SCREENING_PROMPT}\n\n---\n\n{text}"
+
         try:
-            resp = self.client.messages.create(
+            result = claude_cli.run(
+                prompt=prompt,
                 model=config.ROUTER_MODEL,
-                max_tokens=20,
-                temperature=0.1,
-                system=config.SCREENING_PROMPT,
-                messages=[{"role": "user", "content": text}],
+                timeout=config.ROUTER_TIMEOUT,
+                max_output=100,
             )
-            result = resp.content[0].text.strip()
+            result = result.strip()
         except Exception as e:
             logger.warning("스크리닝 호출 실패: %s", e)
             return None
@@ -69,17 +67,33 @@ class Router:
         Sonnet이 직접 답변할 수 있으면 (response, False).
         복잡한 작업이 필요하면 ("[DELEGATE] ...", True).
         """
-        messages = list(conversation or [])
-        messages.append({"role": "user", "content": user_input})
+        prompt_parts = []
+
+        # 시스템 프롬프트
+        sys_prompt = system or config.ROUTER_SYSTEM_PROMPT
+        prompt_parts.append(f"<system>\n{sys_prompt}\n</system>")
+
+        # 대화 이력
+        if conversation:
+            history = []
+            for m in conversation[-20:]:
+                history.append(f"{m['role']}: {m['content']}")
+            prompt_parts.append(
+                "<conversation_history>\n"
+                + "\n".join(history)
+                + "\n</conversation_history>"
+            )
+
+        prompt_parts.append(user_input)
+        prompt = "\n\n".join(prompt_parts)
 
         try:
-            resp = self.client.messages.create(
+            text = claude_cli.run(
+                prompt=prompt,
                 model=config.ROUTER_MODEL,
-                max_tokens=config.ROUTER_MAX_TOKENS,
-                system=system or config.ROUTER_SYSTEM_PROMPT,
-                messages=messages,
+                timeout=config.ROUTER_TIMEOUT,
             )
-            text = resp.content[0].text.strip()
+            text = text.strip()
         except Exception as e:
             logger.error("Sonnet 응답 실패: %s", e)
             return f"응답 생성 중 오류가 발생했습니다: {e}", False
@@ -110,12 +124,12 @@ class Router:
         )
 
         try:
-            resp = self.client.messages.create(
+            result = claude_cli.run(
+                prompt=prompt,
                 model=config.ROUTER_MODEL,
-                max_tokens=200,
-                messages=[{"role": "user", "content": prompt}],
+                timeout=config.ROUTER_TIMEOUT,
+                max_output=500,
             )
-            return resp.content[0].text.strip()
+            return result.strip()
         except Exception:
-            # 실패 시 간단한 기계적 요약
             return f"세션 요약 ({len(turns)}턴)"

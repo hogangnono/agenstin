@@ -4,7 +4,6 @@ version = "0.2.0"
 description = "Sonnet 라우터 + Claude Code CLI 기반 AI 비서"
 requires-python = ">=3.13"
 dependencies = [
-    "anthropic>=0.42.0",
     "prompt-toolkit>=3.0.52",
     "python-dotenv>=1.0.0",
     "rich>=14.3.3",
